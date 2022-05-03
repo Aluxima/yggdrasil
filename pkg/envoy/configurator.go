@@ -13,6 +13,7 @@ import (
 	cache "github.com/envoyproxy/go-control-plane/pkg/cache/v3"
 	util "github.com/envoyproxy/go-control-plane/pkg/conversion"
 	types "github.com/golang/protobuf/ptypes"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/api/extensions/v1beta1"
 )
 
@@ -59,11 +60,12 @@ func NewKubernetesConfigurator(nodeID string, certificates []Certificate, ca str
 }
 
 //Generate creates a new snapshot
-func (c *KubernetesConfigurator) Generate(ingresses []v1beta1.Ingress) cache.Snapshot {
+func (c *KubernetesConfigurator) Generate(ingresses []v1beta1.Ingress, secrets []*v1.Secret) cache.Snapshot {
 	c.Lock()
 	defer c.Unlock()
 
-	config := translateIngresses(validIngressFilter(classFilter(ingresses, c.ingressClasses)))
+	// TODO inject secrets
+	config := translateIngresses(validIngressFilter(classFilter(ingresses, c.ingressClasses)), secrets)
 
 	vmatch, cmatch := config.equals(c.previousConfig)
 
@@ -112,19 +114,18 @@ func compareHosts(pattern, host string) bool {
 }
 
 func (c *KubernetesConfigurator) matchCertificateIndices(virtualHost *virtualHost) ([]int, error) {
-	matchedIndicies := []int{}
+	matchedIndices := []int{}
 
 	for idx, certificate := range c.certificates {
 		for _, host := range certificate.Hosts {
 			if host == "*" || compareHosts(host, virtualHost.Host) { // star matches everything unlike *.thing.com which only matches one level
-				matchedIndicies = append(matchedIndicies, idx)
+				matchedIndices = append(matchedIndices, idx)
 			}
 		}
-
 	}
 
-	if len(matchedIndicies) > 0 {
-		return matchedIndicies, nil
+	if len(matchedIndices) > 0 {
+		return matchedIndices, nil
 	}
 
 	return []int{}, errNoCertificateMatch
@@ -132,10 +133,14 @@ func (c *KubernetesConfigurator) matchCertificateIndices(virtualHost *virtualHos
 
 func (c *KubernetesConfigurator) generateListeners(config *envoyConfiguration) []tcache.Resource {
 	var filterChains []*listener.FilterChain
+	// TODO condition
 	if len(c.certificates) > 0 {
-		filterChains = c.generateTLSFilterChains(config)
-	} else {
+		filterChains = c.generateDynamicTLSFilterChains(config)
+	} else if true {
 		filterChains = c.generateHTTPFilterChain(config)
+	} else {
+		// FIXME
+		filterChains = c.generateTLSFilterChains(config)
 	}
 	return []tcache.Resource{makeListener(filterChains, c.envoyListenerIpv4Address, c.envoyListenPort)}
 }
@@ -167,15 +172,35 @@ func (c *KubernetesConfigurator) generateHTTPFilterChain(config *envoyConfigurat
 	}
 }
 
+func (c *KubernetesConfigurator) generateDynamicTLSFilterChains(config *envoyConfiguration) []*listener.FilterChain {
+	filterChains := []*listener.FilterChain{}
+	for _, virtualHost := range config.VirtualHosts {
+		envoyVHost := makeVirtualHost(virtualHost, c.hostSelectionRetryAttempts)
+		certificate := Certificate{
+			Hosts: []string{virtualHost.Host},
+			Cert:  virtualHost.TlsCert,
+			Key:   virtualHost.TlsKey,
+		}
+		filterChain, err := c.makeFilterChain(certificate, []*route.VirtualHost{envoyVHost})
+		if err != nil {
+			log.Printf("Error making filter chain: %v", err)
+		}
+		filterChains = append(filterChains, &filterChain)
+		// envoyVhosts = append(envoyVhosts, )
+	}
+
+	return filterChains
+}
+
 func (c *KubernetesConfigurator) generateTLSFilterChains(config *envoyConfiguration) []*listener.FilterChain {
 	virtualHostsForCertificates := make([][]*route.VirtualHost, len(c.certificates))
 
 	for _, virtualHost := range config.VirtualHosts {
-		certificateIndicies, err := c.matchCertificateIndices(virtualHost)
+		certificateIndices, err := c.matchCertificateIndices(virtualHost)
 		if err != nil {
 			log.Printf("Error matching certificate for '%s': %v", virtualHost.Host, err)
 		} else {
-			for _, idx := range certificateIndicies {
+			for _, idx := range certificateIndices {
 				virtualHostsForCertificates[idx] = append(virtualHostsForCertificates[idx], makeVirtualHost(virtualHost, c.hostSelectionRetryAttempts))
 			}
 		}

@@ -1,11 +1,13 @@
 package envoy
 
 import (
+	"log"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/api/extensions/v1beta1"
 )
 
@@ -47,6 +49,7 @@ func VirtualHostsEquals(a, b []*virtualHost) bool {
 	sortVirtualHosts(b)
 
 	for idx, hosts := range a {
+		// TODO compare vhost tls
 		if !hosts.Equals(b[idx]) {
 			return false
 		}
@@ -65,6 +68,13 @@ type virtualHost struct {
 	UpstreamCluster string
 	Timeout         time.Duration
 	PerTryTimeout   time.Duration
+	TlsKey          string
+	TlsCert         string
+}
+
+type vhostSecret struct {
+	SecretName      string
+	SecretNamespace string
 }
 
 func (v *virtualHost) Equals(other *virtualHost) bool {
@@ -209,9 +219,43 @@ func (ing *envoyIngress) addTimeout(timeout time.Duration) {
 	ing.vhost.PerTryTimeout = timeout
 }
 
-func translateIngresses(ingresses []v1beta1.Ingress) *envoyConfiguration {
+func addSecretMapping(ingress *v1beta1.Ingress, host string, vhostSecrets *map[string]vhostSecret) {
+	for _, tls := range ingress.Spec.TLS {
+		for _, h := range tls.Hosts {
+			if h == host {
+				(*vhostSecrets)[host] = vhostSecret{tls.SecretName, ingress.Namespace}
+				return
+			}
+		}
+	}
+}
+
+func (ing *envoyIngress) addDynamicTls(vhostSecrets map[string]vhostSecret, secrets []*v1.Secret) {
+	vhostSecret, ok := vhostSecrets[ing.vhost.Host]
+	if !ok {
+		log.Printf("Error matching dynamic certificate for host '%s'", ing.vhost.Host)
+		return
+	}
+	for _, secret := range secrets {
+		if secret.Namespace == vhostSecret.SecretNamespace &&
+			secret.Name == vhostSecret.SecretName {
+
+			tlsCert, certOk := secret.Data["crt"]
+			tlsKey, keyOk := secret.Data["key"]
+			if certOk && keyOk {
+				ing.vhost.TlsCert = string(tlsCert)
+				ing.vhost.TlsKey = string(tlsKey)
+			}
+			return
+		}
+	}
+	log.Printf("Error matching certificate for host '%s': no TLS secret '%s/%s' found", ing.vhost.Host, vhostSecret.SecretNamespace, vhostSecret.SecretName)
+}
+
+func translateIngresses(ingresses []v1beta1.Ingress, secrets []*v1.Secret) *envoyConfiguration {
 	cfg := &envoyConfiguration{}
 	envoyIngresses := map[string]*envoyIngress{}
+	vhostSecrets := map[string]vhostSecret{}
 
 	for _, i := range ingresses {
 		for _, j := range i.Status.LoadBalancer.Ingress {
@@ -229,6 +273,8 @@ func translateIngresses(ingresses []v1beta1.Ingress) *envoyConfiguration {
 					envoyIngress.addUpstream(j.IP)
 				}
 
+				addSecretMapping(&i, rule.Host, &vhostSecrets)
+
 				if i.GetAnnotations()["yggdrasil.uswitch.com/healthcheck-path"] != "" {
 					envoyIngress.addHealthCheckPath(i.GetAnnotations()["yggdrasil.uswitch.com/healthcheck-path"])
 				}
@@ -241,6 +287,9 @@ func translateIngresses(ingresses []v1beta1.Ingress) *envoyConfiguration {
 				}
 			}
 		}
+	}
+	for _, envoyIngress := range envoyIngresses {
+		envoyIngress.addDynamicTls(vhostSecrets, secrets)
 	}
 
 	for _, ingress := range envoyIngresses {

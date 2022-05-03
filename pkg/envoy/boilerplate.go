@@ -112,6 +112,7 @@ func makeHealthConfig() *hcfg.HealthCheck {
 func (c *KubernetesConfigurator) makeConnectionManager(virtualHosts []*route.VirtualHost) *hcm.HttpConnectionManager {
 	accessLogConfig, err := util.MessageToStruct(
 		&eal.FileAccessLog{
+			// TODO make log path configurable
 			Path: "/var/log/envoy/access.log",
 			AccessLogFormat: &eal.FileAccessLog_LogFormat{
 				LogFormat: &core.SubstitutionFormatString{
@@ -183,6 +184,7 @@ func (c *KubernetesConfigurator) makeFilterChain(certificate Certificate, virtua
 	}
 
 	tls := &auth.DownstreamTlsContext{}
+	// TODO configurable TlsParameters.TlsMinimumProtocolVersion
 	tls.CommonTlsContext = &auth.CommonTlsContext{
 		TlsCertificates: []*auth.TlsCertificate{
 			{

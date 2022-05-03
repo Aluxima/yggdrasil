@@ -111,8 +111,8 @@ func TestEqualityVirtualHosts(t *testing.T) {
 func TestEquals(t *testing.T) {
 	ingress := newIngress("foo.app.com", "foo.cluster.com")
 	ingress2 := newIngress("bar.app.com", "foo.bar.com")
-	c := translateIngresses([]v1beta1.Ingress{ingress, ingress2})
-	c2 := translateIngresses([]v1beta1.Ingress{ingress, ingress2})
+	c := translateIngresses([]v1beta1.Ingress{ingress, ingress2}, []*v1.Secret{})
+	c2 := translateIngresses([]v1beta1.Ingress{ingress, ingress2}, []*v1.Secret{})
 
 	vmatch, cmatch := c.equals(c2)
 	if vmatch != true {
@@ -128,8 +128,8 @@ func TestNotEquals(t *testing.T) {
 	ingress2 := newIngress("foo.app.com", "bar.cluster.com")
 	ingress3 := newIngress("foo.baz.com", "bar.cluster.com")
 	ingress4 := newIngress("foo.howdy.com", "bar.cluster.com")
-	c := translateIngresses([]v1beta1.Ingress{ingress, ingress3, ingress2})
-	c2 := translateIngresses([]v1beta1.Ingress{ingress, ingress2, ingress4})
+	c := translateIngresses([]v1beta1.Ingress{ingress, ingress3, ingress2}, []*v1.Secret{})
+	c2 := translateIngresses([]v1beta1.Ingress{ingress, ingress2, ingress4}, []*v1.Secret{})
 
 	vmatch, cmatch := c.equals(c2)
 	if vmatch == true {
@@ -144,8 +144,8 @@ func TestNotEquals(t *testing.T) {
 func TestPartialEquals(t *testing.T) {
 	ingress := newIngress("foo.app.com", "bar.cluster.com")
 	ingress2 := newIngress("foo.app.com", "foo.cluster.com")
-	c := translateIngresses([]v1beta1.Ingress{ingress2})
-	c2 := translateIngresses([]v1beta1.Ingress{ingress})
+	c := translateIngresses([]v1beta1.Ingress{ingress2}, []*v1.Secret{})
+	c2 := translateIngresses([]v1beta1.Ingress{ingress}, []*v1.Secret{})
 
 	vmatch, cmatch := c2.equals(c)
 	if vmatch != true {
@@ -159,7 +159,7 @@ func TestPartialEquals(t *testing.T) {
 
 func TestGeneratesForSingleIngress(t *testing.T) {
 	ingress := newIngress("foo.app.com", "foo.cluster.com")
-	c := translateIngresses([]v1beta1.Ingress{ingress})
+	c := translateIngresses([]v1beta1.Ingress{ingress}, []*v1.Secret{})
 
 	if len(c.VirtualHosts) != 1 {
 		t.Error("expected 1 virtual host")
@@ -191,7 +191,7 @@ func TestGeneratesForSingleIngress(t *testing.T) {
 func TestGeneratesForMultipleIngressSharingSpecHost(t *testing.T) {
 	fooIngress := newIngress("app.com", "foo.com")
 	barIngress := newIngress("app.com", "bar.com")
-	c := translateIngresses([]v1beta1.Ingress{fooIngress, barIngress})
+	c := translateIngresses([]v1beta1.Ingress{fooIngress, barIngress}, []*v1.Secret{})
 
 	if len(c.VirtualHosts) != 1 {
 		t.Error("expected 1 virtual host")
@@ -246,7 +246,7 @@ func TestFilterNonMatchingIngresses(t *testing.T) {
 
 func TestIngressWithIP(t *testing.T) {
 	ingress := newIngressIP("app.com", "127.0.0.1")
-	c := translateIngresses([]v1beta1.Ingress{ingress})
+	c := translateIngresses([]v1beta1.Ingress{ingress}, []*v1.Secret{})
 	if c.Clusters[0].Hosts[0] != "127.0.0.1" {
 		t.Errorf("expected cluster host to be IP address, was %s", c.Clusters[0].Hosts[0])
 	}

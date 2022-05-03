@@ -37,24 +37,37 @@ func (i *IngressAggregator) Run(ctx context.Context) error {
 	return nil
 }
 
+func dumpIngress(action string, obj interface{}) {
+	secret, ok := obj.(*v1beta1.Ingress)
+	if !ok {
+		logrus.Errorf("ingress error %+v", obj)
+		return
+	}
+	logrus.Infof("%s ingress %s/%s", action, secret.Namespace, secret.Name)
+}
+
 func (i *IngressAggregator) OnAdd(obj interface{}) {
 	i.events <- obj
+	dumpIngress("added", obj)
 	logrus.Debugf("adding %+v", obj)
 }
 
 func (i *IngressAggregator) OnDelete(obj interface{}) {
 	i.events <- obj
+	dumpIngress("deleted", obj)
 	logrus.Debugf("deleting %+v", obj)
 }
 
 func (i *IngressAggregator) OnUpdate(old, new interface{}) {
 	i.events <- new
+	dumpIngress("updated", new)
 	logrus.Debugf("updating %+v", new)
 }
 
 //AddSource adds a new source for watching ingresses, must be called before running
 func (i *IngressAggregator) AddSource(source cache.ListerWatcher) {
 	//Todo implement handler for events
+	//Todo + SharedIndexerInformerFactory WithTweakListOptions ?
 	store, controller := cache.NewIndexerInformer(source, &v1beta1.Ingress{}, time.Minute, i, cache.Indexers{})
 	i.stores = append(i.stores, store)
 	i.controllers = append(i.controllers, controller)

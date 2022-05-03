@@ -135,7 +135,7 @@ func main(*cobra.Command, []string) error {
 		log.SetLevel(log.DebugLevel)
 	}
 
-	clusterSources, err := createSources(c.Clusters)
+	clusterSources, clusterSecretsSources, err := createSources(c.Clusters)
 	if err != nil {
 		return fmt.Errorf("error creating sources: %s", err)
 	}
@@ -143,12 +143,13 @@ func main(*cobra.Command, []string) error {
 	stopCh := make(chan os.Signal, 1)
 	signal.Notify(stopCh, os.Interrupt, syscall.SIGTERM)
 
-	configSources, err := configFromKubeConfig(kubeConfig)
+	configSources, configSecretsSources, err := configFromKubeConfig(kubeConfig)
 	if err != nil {
 		return fmt.Errorf("error parsing kube config: %s", err)
 	}
 
 	sources := append(clusterSources, configSources...)
+	secretsSources := append(clusterSecretsSources, configSecretsSources...)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -186,6 +187,7 @@ func main(*cobra.Command, []string) error {
 		c.Certificates[idx].Key = string(keyBytes)
 	}
 	lister := k8s.NewIngressAggregator(sources)
+	secretsLister := k8s.NewSecretsAggregator(secretsSources)
 	configurator := envoy.NewKubernetesConfigurator(
 		viper.GetString("nodeName"),
 		c.Certificates,
@@ -199,10 +201,11 @@ func main(*cobra.Command, []string) error {
 		envoy.WithUpstreamHealthCheck(c.UpstreamHealthCheck),
 		envoy.WithUseRemoteAddress(c.UseRemoteAddress),
 	)
-	snapshotter := envoy.NewSnapshotter(envoyCache, configurator, lister)
+	snapshotter := envoy.NewSnapshotter(envoyCache, configurator, lister, secretsLister)
 
 	go snapshotter.Run(ctx)
 	lister.Run(ctx)
+	secretsLister.Run(ctx)
 
 	envoyServer := server.NewServer(ctx, envoyCache, &callbacks{})
 	go runEnvoyServer(envoyServer, viper.GetString("address"), viper.GetString("healthAddress"), ctx.Done())
@@ -230,8 +233,9 @@ func createClientConfig(path string) (*rest.Config, error) {
 	return clientcmd.BuildConfigFromFlags("", path)
 }
 
-func createSources(clusters []clusterConfig) ([]k8scache.ListerWatcher, error) {
+func createSources(clusters []clusterConfig) ([]k8scache.ListerWatcher, []k8scache.ListerWatcher, error) {
 	sources := []k8scache.ListerWatcher{}
+	secretsSources := []k8scache.ListerWatcher{}
 
 	for _, cluster := range clusters {
 
@@ -240,7 +244,7 @@ func createSources(clusters []clusterConfig) ([]k8scache.ListerWatcher, error) {
 		if cluster.TokenPath != "" {
 			bytes, err := ioutil.ReadFile(cluster.TokenPath)
 			if err != nil {
-				return sources, err
+				return sources, secretsSources, err
 			}
 			token = string(bytes)
 		} else {
@@ -256,30 +260,33 @@ func createSources(clusters []clusterConfig) ([]k8scache.ListerWatcher, error) {
 		}
 		clientSet, err := kubernetes.NewForConfig(config)
 		if err != nil {
-			return sources, err
+			return sources, secretsSources, err
 		}
 		sources = append(sources, k8s.NewListWatch(clientSet))
+		secretsSources = append(secretsSources, k8s.NewSecretsListWatch(clientSet))
 	}
 
-	return sources, nil
+	return sources, secretsSources, nil
 }
 
-func configFromKubeConfig(paths []string) ([]k8scache.ListerWatcher, error) {
+func configFromKubeConfig(paths []string) ([]k8scache.ListerWatcher, []k8scache.ListerWatcher, error) {
 	sources := []k8scache.ListerWatcher{}
+	secretsSources := []k8scache.ListerWatcher{}
 
 	for _, configPath := range paths {
 		config, err := createClientConfig(configPath)
 		if err != nil {
-			return sources, err
+			return sources, secretsSources, err
 		}
 		clientSet, err := kubernetes.NewForConfig(config)
 		if err != nil {
-			return sources, err
+			return sources, secretsSources, err
 		}
 		sources = append(sources, k8s.NewListWatch(clientSet))
+		secretsSources = append(sources, k8s.NewSecretsListWatch(clientSet))
 	}
 
-	return sources, nil
+	return sources, secretsSources, nil
 }
 
 // ID function

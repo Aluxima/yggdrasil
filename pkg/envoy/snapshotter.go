@@ -5,6 +5,7 @@ import (
 
 	cache "github.com/envoyproxy/go-control-plane/pkg/cache/v3"
 	log "github.com/sirupsen/logrus"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/api/extensions/v1beta1"
 
 	"github.com/uswitch/yggdrasil/pkg/k8s"
@@ -12,7 +13,7 @@ import (
 
 //Configurator is an interface that implements Generate and NodeID
 type Configurator interface {
-	Generate([]v1beta1.Ingress) cache.Snapshot
+	Generate([]v1beta1.Ingress, []*v1.Secret) cache.Snapshot
 	NodeID() string
 }
 
@@ -22,20 +23,30 @@ type Snapshotter struct {
 	snapshotCache cache.SnapshotCache
 	configurator  Configurator
 	lister        *k8s.IngressAggregator
+	secretsLister *k8s.SecretsAggregator
 }
 
 //NewSnapshotter returns a new Snapshotter
-func NewSnapshotter(snapshotCache cache.SnapshotCache, config Configurator, lister *k8s.IngressAggregator) *Snapshotter {
-	return &Snapshotter{snapshotCache: snapshotCache, configurator: config, lister: lister}
+func NewSnapshotter(snapshotCache cache.SnapshotCache, config Configurator, lister *k8s.IngressAggregator, secretsLister *k8s.SecretsAggregator) *Snapshotter {
+	return &Snapshotter{
+		snapshotCache: snapshotCache,
+		configurator:  config,
+		lister:        lister,
+		secretsLister: secretsLister}
 }
 
 func (s *Snapshotter) snapshot() error {
 	ingresses, err := s.lister.List()
+	secrets, secErr := s.secretsLister.List()
 	if err != nil {
 		return err
 	}
-
-	snapshot := s.configurator.Generate(ingresses)
+	log.Printf("Secrets count: %d", len(secrets))
+	if secErr != nil {
+		return secErr
+	}
+	// TODO list secrets
+	snapshot := s.configurator.Generate(ingresses, secrets)
 
 	log.Debugf("took snapshot: %+v", snapshot)
 
@@ -50,6 +61,7 @@ func (s *Snapshotter) Run(ctx context.Context) {
 			select {
 			case <-s.lister.Events():
 				s.snapshot()
+			// TODO secrets watch
 			case <-ctx.Done():
 				return
 			}
