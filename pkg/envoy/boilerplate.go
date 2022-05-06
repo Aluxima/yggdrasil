@@ -112,7 +112,7 @@ func makeHealthConfig() *hcfg.HealthCheck {
 func (c *KubernetesConfigurator) makeConnectionManager(virtualHosts []*route.VirtualHost) *hcm.HttpConnectionManager {
 	accessLogConfig, err := util.MessageToStruct(
 		&eal.FileAccessLog{
-			// TODO make log path configurable
+			// TODO make logs path configurable
 			Path: "/var/log/envoy/access.log",
 			AccessLogFormat: &eal.FileAccessLog_LogFormat{
 				LogFormat: &core.SubstitutionFormatString{

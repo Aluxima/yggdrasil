@@ -64,7 +64,6 @@ func (c *KubernetesConfigurator) Generate(ingresses []v1beta1.Ingress, secrets [
 	c.Lock()
 	defer c.Unlock()
 
-	// TODO inject secrets
 	config := translateIngresses(validIngressFilter(classFilter(ingresses, c.ingressClasses)), secrets)
 
 	vmatch, cmatch := config.equals(c.previousConfig)
@@ -176,6 +175,10 @@ func (c *KubernetesConfigurator) generateDynamicTLSFilterChains(config *envoyCon
 	filterChains := []*listener.FilterChain{}
 	for _, virtualHost := range config.VirtualHosts {
 		envoyVHost := makeVirtualHost(virtualHost, c.hostSelectionRetryAttempts)
+		if virtualHost.TlsCert == "" || virtualHost.TlsKey == "" {
+			// FIXME handle default cert
+			continue
+		}
 		certificate := Certificate{
 			Hosts: []string{virtualHost.Host},
 			Cert:  virtualHost.TlsCert,
@@ -186,7 +189,6 @@ func (c *KubernetesConfigurator) generateDynamicTLSFilterChains(config *envoyCon
 			log.Printf("Error making filter chain: %v", err)
 		}
 		filterChains = append(filterChains, &filterChain)
-		// envoyVhosts = append(envoyVhosts, )
 	}
 
 	return filterChains

@@ -49,7 +49,6 @@ func VirtualHostsEquals(a, b []*virtualHost) bool {
 	sortVirtualHosts(b)
 
 	for idx, hosts := range a {
-		// TODO compare vhost tls
 		if !hosts.Equals(b[idx]) {
 			return false
 		}
@@ -85,7 +84,9 @@ func (v *virtualHost) Equals(other *virtualHost) bool {
 	return v.Host == other.Host &&
 		v.Timeout == other.Timeout &&
 		v.UpstreamCluster == other.UpstreamCluster &&
-		v.PerTryTimeout == other.PerTryTimeout
+		v.PerTryTimeout == other.PerTryTimeout &&
+		v.TlsCert == other.TlsCert &&
+		v.TlsKey == other.TlsKey
 }
 
 type cluster struct {
@@ -219,18 +220,18 @@ func (ing *envoyIngress) addTimeout(timeout time.Duration) {
 	ing.vhost.PerTryTimeout = timeout
 }
 
-func addSecretMapping(ingress *v1beta1.Ingress, host string, vhostSecrets *map[string]vhostSecret) {
+func getHostTlsSecret(ingress *v1beta1.Ingress, host string) *vhostSecret {
 	for _, tls := range ingress.Spec.TLS {
 		for _, h := range tls.Hosts {
 			if h == host {
-				(*vhostSecrets)[host] = vhostSecret{tls.SecretName, ingress.Namespace}
-				return
+				return &vhostSecret{tls.SecretName, ingress.Namespace}
 			}
 		}
 	}
+	return nil
 }
 
-func (ing *envoyIngress) addDynamicTls(vhostSecrets map[string]vhostSecret, secrets []*v1.Secret) {
+func (ing *envoyIngress) injectDynamicTls(vhostSecrets map[string]*vhostSecret, secrets []*v1.Secret) {
 	vhostSecret, ok := vhostSecrets[ing.vhost.Host]
 	if !ok {
 		log.Printf("Error matching dynamic certificate for host '%s'", ing.vhost.Host)
@@ -240,22 +241,25 @@ func (ing *envoyIngress) addDynamicTls(vhostSecrets map[string]vhostSecret, secr
 		if secret.Namespace == vhostSecret.SecretNamespace &&
 			secret.Name == vhostSecret.SecretName {
 
-			tlsCert, certOk := secret.Data["crt"]
-			tlsKey, keyOk := secret.Data["key"]
+			tlsCert, certOk := secret.Data["tls.crt"]
+			tlsKey, keyOk := secret.Data["tls.key"]
+			// TODO check that crt and key are valid
 			if certOk && keyOk {
 				ing.vhost.TlsCert = string(tlsCert)
 				ing.vhost.TlsKey = string(tlsKey)
+				return
+			} else {
+				logrus.Debugf("Incorrect secret %s/%s", secret.Namespace, secret.Name)
 			}
-			return
 		}
 	}
-	log.Printf("Error matching certificate for host '%s': no TLS secret '%s/%s' found", ing.vhost.Host, vhostSecret.SecretNamespace, vhostSecret.SecretName)
+	log.Printf("Error matching certificate for host '%s': no valid TLS secret '%s/%s' found", ing.vhost.Host, vhostSecret.SecretNamespace, vhostSecret.SecretName)
 }
 
 func translateIngresses(ingresses []v1beta1.Ingress, secrets []*v1.Secret) *envoyConfiguration {
 	cfg := &envoyConfiguration{}
 	envoyIngresses := map[string]*envoyIngress{}
-	vhostSecrets := map[string]vhostSecret{}
+	vhostSecrets := map[string]*vhostSecret{}
 
 	for _, i := range ingresses {
 		for _, j := range i.Status.LoadBalancer.Ingress {
@@ -273,7 +277,9 @@ func translateIngresses(ingresses []v1beta1.Ingress, secrets []*v1.Secret) *envo
 					envoyIngress.addUpstream(j.IP)
 				}
 
-				addSecretMapping(&i, rule.Host, &vhostSecrets)
+				if hostTlsSecret := getHostTlsSecret(&i, rule.Host); hostTlsSecret != nil {
+					vhostSecrets[rule.Host] = hostTlsSecret
+				}
 
 				if i.GetAnnotations()["yggdrasil.uswitch.com/healthcheck-path"] != "" {
 					envoyIngress.addHealthCheckPath(i.GetAnnotations()["yggdrasil.uswitch.com/healthcheck-path"])
@@ -288,11 +294,9 @@ func translateIngresses(ingresses []v1beta1.Ingress, secrets []*v1.Secret) *envo
 			}
 		}
 	}
-	for _, envoyIngress := range envoyIngresses {
-		envoyIngress.addDynamicTls(vhostSecrets, secrets)
-	}
 
 	for _, ingress := range envoyIngresses {
+		ingress.injectDynamicTls(vhostSecrets, secrets)
 		cfg.Clusters = append(cfg.Clusters, ingress.cluster)
 		cfg.VirtualHosts = append(cfg.VirtualHosts, ingress.vhost)
 	}

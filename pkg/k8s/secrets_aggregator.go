@@ -32,35 +32,23 @@ func (i *SecretsAggregator) Run(ctx context.Context) error {
 		logrus.Debugf("starting cache controller: %+v", c)
 		go c.Run(ctx.Done())
 		cache.WaitForCacheSync(ctx.Done(), c.HasSynced)
-		logrus.Debugf("cache controller synced")
+		logrus.Debugf("secrets cache controller synced")
 	}
 	return nil
 }
 
-// func dumpSecret(action string, obj interface{}) {
-// 	secret, ok := obj.(*v1.Secret)
-// 	if !ok {
-// 		logrus.Errorf("secret error %+v", obj)
-// 		return
-// 	}
-// 	logrus.Infof("%s secret %s/%s", action, secret.Namespace, secret.Name)
-// }
-
 func (i *SecretsAggregator) OnAdd(obj interface{}) {
 	i.events <- obj
-	// dumpSecret("added", obj)
 	logrus.Debugf("adding %+v", obj)
 }
 
 func (i *SecretsAggregator) OnDelete(obj interface{}) {
 	i.events <- obj
-	// dumpSecret("deleted", obj)
 	logrus.Debugf("deleting %+v", obj)
 }
 
 func (i *SecretsAggregator) OnUpdate(old, new interface{}) {
 	i.events <- new
-	// dumpSecret("updated", new)
 	logrus.Debugf("updating %+v", new)
 }
 

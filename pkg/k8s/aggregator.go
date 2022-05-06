@@ -32,35 +32,23 @@ func (i *IngressAggregator) Run(ctx context.Context) error {
 		logrus.Debugf("starting cache controller: %+v", c)
 		go c.Run(ctx.Done())
 		cache.WaitForCacheSync(ctx.Done(), c.HasSynced)
-		logrus.Debugf("cache controller synced")
+		logrus.Debugf("ingresses cache controller synced")
 	}
 	return nil
 }
 
-func dumpIngress(action string, obj interface{}) {
-	secret, ok := obj.(*v1beta1.Ingress)
-	if !ok {
-		logrus.Errorf("ingress error %+v", obj)
-		return
-	}
-	logrus.Infof("%s ingress %s/%s", action, secret.Namespace, secret.Name)
-}
-
 func (i *IngressAggregator) OnAdd(obj interface{}) {
 	i.events <- obj
-	dumpIngress("added", obj)
 	logrus.Debugf("adding %+v", obj)
 }
 
 func (i *IngressAggregator) OnDelete(obj interface{}) {
 	i.events <- obj
-	dumpIngress("deleted", obj)
 	logrus.Debugf("deleting %+v", obj)
 }
 
 func (i *IngressAggregator) OnUpdate(old, new interface{}) {
 	i.events <- new
-	dumpIngress("updated", new)
 	logrus.Debugf("updating %+v", new)
 }
 

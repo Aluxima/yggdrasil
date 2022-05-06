@@ -204,8 +204,8 @@ func main(*cobra.Command, []string) error {
 	snapshotter := envoy.NewSnapshotter(envoyCache, configurator, lister, secretsLister)
 
 	go snapshotter.Run(ctx)
-	lister.Run(ctx)
 	secretsLister.Run(ctx)
+	lister.Run(ctx)
 
 	envoyServer := server.NewServer(ctx, envoyCache, &callbacks{})
 	go runEnvoyServer(envoyServer, viper.GetString("address"), viper.GetString("healthAddress"), ctx.Done())
@@ -283,7 +283,7 @@ func configFromKubeConfig(paths []string) ([]k8scache.ListerWatcher, []k8scache.
 			return sources, secretsSources, err
 		}
 		sources = append(sources, k8s.NewListWatch(clientSet))
-		secretsSources = append(sources, k8s.NewSecretsListWatch(clientSet))
+		secretsSources = append(secretsSources, k8s.NewSecretsListWatch(clientSet))
 	}
 
 	return sources, secretsSources, nil

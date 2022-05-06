@@ -41,11 +41,9 @@ func (s *Snapshotter) snapshot() error {
 	if err != nil {
 		return err
 	}
-	log.Printf("Secrets count: %d", len(secrets))
 	if secErr != nil {
 		return secErr
 	}
-	// TODO list secrets
 	snapshot := s.configurator.Generate(ingresses, secrets)
 
 	log.Debugf("took snapshot: %+v", snapshot)
@@ -59,9 +57,10 @@ func (s *Snapshotter) Run(ctx context.Context) {
 	go func() {
 		for {
 			select {
+			// TODO stop snapshotting at each resource update, do bulk
+			case <-s.secretsLister.Events():
 			case <-s.lister.Events():
 				s.snapshot()
-			// TODO secrets watch
 			case <-ctx.Done():
 				return
 			}
